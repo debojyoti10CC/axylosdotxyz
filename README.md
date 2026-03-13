@@ -1,483 +1,408 @@
-# AgentDNS — Full Technical Documentation
+# AgentDNS
 
-**Project**: AgentDNS — Agent Mesh + OpenClaw + HTTP 402 (x402) + Elsa execution
+**AgentDNS** is a decentralized prototype for an **autonomous AI agent economy**. It allows software agents to discover each other over a peer‑to‑peer mesh network, negotiate prices for services, pay using **HTTP 402 micropayments (x402)**, and optionally settle transactions on blockchain through the Elsa execution stack.
 
-**Short description**: AgentDNS is a decentralized agent economy prototype that lets autonomous AI agents discover peers over a UDP P2P mesh, negotiate services, pay for API calls using HTTP 402 micropayments (x402), and settle agreements on-chain using the Elsa execution stack.
-
-**Primary stack**: Node.js, Express, ethers.js, axios, UDP sockets, OpenClaw integration (mocked LLM), Elsa X402 client.
-
-**Related projects/services referenced once**: entity["software","HeyElsa","AI crypto agent platform"] — execution/payment layer used for on-chain settlement and x402 requests.
-
----
-
-## Table of Contents
-
-1. Overview
-2. Goals & Use Cases
-3. High-Level Architecture
-4. Components (Detailed)
-
-   * Elsa X402 Payment Client
-   * P2P Mesh & Agent DNS
-   * Negotiation Protocol (NEGO state machine)
-   * OpenClaw Agent Integration
-   * REST API & CLI
-5. Installation & Local Setup
-6. Environment Variables
-7. Running the System (Examples)
-8. API Reference (endpoints)
-9. Negotiation & Payment Flow (sequence diagrams)
-10. Security Considerations
-11. Demo Plan & Suggested Scripts (for hackathons like entity["event","ETHMumbai","Ethereum hackathon in Mumbai"])
-12. Testing & Troubleshooting
-13. Roadmap & Future Enhancements
-14. Contributing
-15. Appendix: File map & quick references
-
----
-
-## 1. Overview
-
-AgentDNS is a proof-of-concept platform for the emerging agent economy. Autonomous agents (servers) advertise capabilities, discover other agents through a UDP-based mesh, and perform peer-to-peer economic negotiations using a deterministic negotiation protocol. When a buyer and seller agree, payment is requested via HTTP 402 micropayment challenges (x402). The Elsa X402 client signs and sends payment headers; when payment is authorized, the agreed action (for example: a token swap) is executed and optionally settled on-chain.
-
-This repository splits responsibilities between three layers:
-
-* **Agent Reasoning Layer** (OpenClaw agent logic) — decides whether to accept/counter offers, when to call tools, and how to respond to natural language commands. In the current codebase this layer is intentionally mocked for deterministic demos.
-* **Networking & Negotiation Layer** (Agent DNS + UDP mesh) — peer discovery and negotiation state machine.
-* **Execution & Settlement Layer** (Elsa X402 client + contract/DEX execution) — payment signing, x402 API calls, and optional on-chain transactions.
-
----
-
-## 2. Goals & Use Cases
-
-**Primary goals**
-
-* Demonstrate a working agent-to-agent economic flow (discover → negotiate → pay → settle).
-* Provide robust payment plumbing (ECDSA-signed x402 headers, session accounting, budget enforcement).
-* Keep demos stable by mocking LLM components while integrating live x402 endpoints.
-
-**Target use cases**
-
-* Autonomous DeFi trading bots negotiating execution fees with service providers.
-* Machine-to-machine API marketplaces where AI agents purchase data/compute per call.
-* A hackathon demo that clearly shows agent discovery, negotiation, micropayment, and on-chain settlement.
-
----
-
-## 3. High-Level Architecture
+The system demonstrates the full lifecycle of **agent‑to‑agent commerce**:
 
 ```
-User / CLI / Frontend
-       ↓
-OpenClaw Agent (decision loop, mocked LLM)
-       ↓
-Agent DNS Mesh (UDP P2P) — discovery & negotiation
-       ↓
-Negotiation Protocol (NEGO_OFFER → COUNTER → NEGO_ACCEPT → PAYMENT_402_REQUIRED → PAYMENT_402_COMPLETED)
-       ↓
-Elsa X402 Payment Client (ECDSA payments, session & budget management)
-       ↓
-x402 API (https://x402-api.heyelsa.ai) → DEX / DeFi Protocols → Blockchain (optional on-chain settlement)
+Discovery → Negotiation → Payment Challenge → Micropayment → Execution → Settlement
 ```
 
-Key notes:
-
-* The system supports running multiple agents on the same LAN (two-laptop demo) or across machines.
-* Negotiation is deterministic and logged; OpenClaw integration provides the hook for upgrading decision logic to an LLM later.
+It was designed as a hackathon‑friendly architecture demonstrating autonomous economic behavior between AI agents.
 
 ---
 
-## 4. Components (Detailed)
+# Core Concept
 
-### 4.1 Elsa X402 Payment Client (`lib/ElsaX402PaymentClient.js`)
+Traditional APIs rely on:
 
-**Status**: READY
+* API keys
+* subscriptions
+* centralized billing
 
-**Responsibilities**:
+AgentDNS introduces a new model where **AI agents pay per request automatically**.
 
-* Sign ECDSA messages with the configured private key (ethers.js) to produce X-PAYMENT headers.
-* Send POST requests to the live x402 endpoint using axios.
-* Track session budgets, daily limits and API call counts to avoid overspending.
-* Provide helper methods used by higher-level route handlers and tools: `getSwapQuote()`, `analyzeWallet()`, `executeSwap()` (dry-run and confirmed)
+Example flow:
 
-**Key behaviours**:
-
-* Generates a JWT-like payload that includes request metadata and signs using the configured wallet.
-* Implements local rate-limiting / budget check before attempting network calls.
-* Returns native responses from the x402 API or throws consistent errors for the caller to handle.
-
-**Implementation tips**:
-
-* Keep the signing function small and testable. Unit-test the generated X-PAYMENT header against a fixed keypair.
-* Environment toggles allow execution tools to be disabled for safe demos (`ELSA_ENABLE_EXECUTION_TOOLS=false`).
-
-### 4.2 Peer-to-Peer Communication (`agent-dns-server.js`)
-
-**Status**: READY
-
-**Responsibilities**:
-
-* Maintain a lightweight UDP mesh network (P2PMeshNetwork class) that broadcasts/receives JSON messages to/from local peers.
-* Announce agent capabilities, listen for peer announcements, and forward negotiation messages.
-* Provide a state machine for negotiation messages: NEGO_OFFER, COUNTER, NEGO_ACCEPT, PAYMENT_402_REQUIRED, PAYMENT_402_COMPLETED.
-
-**Notes**:
-
-* Messages are AES-256 encrypted on the wire (shared symmetric keys configured per node) to protect privacy for local demos.
-* The mesh is intentionally minimal (no DHT, no NAT traversal) — designed for LAN/hackathon use.
-
-### 4.3 Negotiation Protocol
-
-**State machine**:
-
-* `NEGO_OFFER` — seller offers price & terms
-* `COUNTER` — buyer or seller counters the offer
-* `NEGO_ACCEPT` — one party accepts
-* `PAYMENT_402_REQUIRED` — seller issues an HTTP 402 challenge for the required fee
-* `PAYMENT_402_COMPLETED` — buyer sends signed payment, seller validates, then executes
-
-**Message format (JSON)**:
-
-```json
-{
-  "type": "NEGO_OFFER",
-  "id": "uuid",
-  "from": "agent-id",
-  "to": "agent-id",
-  "payload": {
-    "service": "swap",
-    "pair": "USDC/WETH",
-    "amount": 100,
-    "price": 2500
-  },
-  "ts": 1620000000000
-}
-```
-
-**Failure/fallback rules**:
-
-* If payment is not completed within `PAYMENT_TIMEOUT_MS`, the negotiation aborts and both parties log the failure.
-* If x402 payment fails, the seller can optionally move to a fallback `demo-mode` response that returns simulated results.
-
-### 4.4 OpenClaw Agent Integration (`lib/OpenClawAgent.js` and `agent-dns-openclaw-integration.js`)
-
-**Status**: MOCKED — designed as a deterministic demo layer.
-
-**Responsibilities**:
-
-* Expose `decideOnTrade()`, `handleCommand()` and higher-level decision functions used by REST endpoints.
-* In the current branch, decision logic is implemented as rule-based heuristics for reliability during demos.
-
-**Mock behaviours**:
-
-* `decideOnTrade()` uses simple rules (e.g., sellers reject < 90% of budget; buyers accept if gap < 5%).
-* Natural language commands in `/openclaw/command` are parsed using heuristics (string includes checks). This avoids LLM rate-limits and variability during demos.
-
-**Upgrade path**:
-
-* Replace the rule-based core with a prompt-to-LLM flow (Anthropic/Claude, OpenAI or a local LLM). Provide a minimal prompt schema and parse JSON intent outputs.
-
-### 4.5 REST API & CLI
-
-**Status**: MIXED
-
-**Express Endpoints (representative)**:
-
-* `GET /health` — healthcheck
-* `GET /portfolio` — fetch portfolio (calls Elsa client; demo fallback on error)
-* `GET /price/:token` — current token price (calls Elsa `price` tool; fallback price when x402 fails)
-* `POST /trade/propose` — propose a trade to a discovered peer
-* `POST /trade/execute` — finalize a trade (verifies x402 payment and optionally executes swap)
-* `POST /openclaw/command` — accept a natural-language instruction (mock parser currently)
-
-**CLI**:
-
-* `npm run seller` — start a seller node (port 8080, mesh port 9999 by default)
-* `npm run buyer` — start a buyer node (port 8081, connect to a seller)
-* `npm run cli` — interactive shell for manual proposals and monitoring
-
-**Demo-mode behaviours**:
-
-* Many endpoints have `try/catch` wrappers that return `{ status: 'demo mode' }` or a hardcoded price when the Elsa API times out or errors. This ensures the demo never dead-ends.
+1. Buyer agent requests a service.
+2. Seller agent negotiates price.
+3. Seller responds with **HTTP 402 Payment Required**.
+4. Buyer signs a payment using a crypto wallet.
+5. Service executes and optionally settles on-chain.
 
 ---
 
-## 5. Installation & Local Setup
+# Features
 
-**Prerequisites**:
+## Agent Discovery (P2P Mesh)
 
-* Node 18+ (recommended)
+Agents discover each other over a **UDP peer‑to‑peer mesh network**.
+
+* no central registry
+* dynamic node discovery
+* LAN‑based communication
+
+Each node broadcasts its presence and listens for other agents.
+
+---
+
+## Agent Negotiation Protocol
+
+Agents negotiate service prices using a structured negotiation protocol.
+
+Negotiation states:
+
+```
+NEGO_OFFER
+→ COUNTER
+→ NEGO_ACCEPT
+→ PAYMENT_402_REQUIRED
+→ PAYMENT_402_COMPLETED
+```
+
+Agents follow different strategies:
+
+**Seller agent**
+
+* starts high
+* negotiates slowly
+
+**Buyer agent**
+
+* starts low
+* searches for midpoint
+
+---
+
+## HTTP 402 Micropayments (x402)
+
+Instead of API keys, services require **cryptographically signed micropayments**.
+
+The client generates an `X-PAYMENT` header using an ECDSA wallet signature.
+
+Example request:
+
+```
+POST /api/get_swap_quote
+X-PAYMENT: signed-token
+```
+
+Payments are verified through the x402 API.
+
+---
+
+## Elsa Execution Layer
+
+Payments and DeFi actions are executed using the Elsa execution infrastructure.
+
+Capabilities include:
+
+* wallet analysis
+* token price queries
+* swap quotes
+* portfolio analysis
+* token swaps
+
+Execution tools can run in:
+
+* **dry‑run mode** (safe demo)
+* **live execution mode** (on‑chain swaps)
+
+---
+
+## Autonomous Trading Agents
+
+Agents can act as **automated DeFi trading bots**.
+
+Capabilities include:
+
+* monitoring token prices
+* analyzing portfolios
+* suggesting yield strategies
+* executing swaps
+
+Each action may require a micropayment through the x402 protocol.
+
+---
+
+# System Architecture
+
+```
+User / CLI
+      ↓
+OpenClaw Agent
+      ↓
+Agent DNS Mesh Network
+      ↓
+Negotiation Protocol
+      ↓
+HTTP 402 Payment
+      ↓
+Elsa X402 Client
+      ↓
+DeFi / Blockchain
+```
+
+Layers:
+
+| Layer            | Purpose                       |
+| ---------------- | ----------------------------- |
+| Agent Layer      | reasoning and decision making |
+| Networking Layer | peer discovery + negotiation  |
+| Payment Layer    | x402 micropayments            |
+| Execution Layer  | DeFi interactions             |
+
+---
+
+# Project Structure
+
+```
+.
+├── agent-dns-server.js
+├── agent-dns-openclaw-integration.js
+├── lib
+│   ├── ElsaX402PaymentClient.js
+│   ├── OpenClawAgent.js
+│   └── P2PMeshNetwork.js
+├── cli
+│   └── index.js
+├── routes
+│   └── trade.js
+└── utils
+    └── encryption.js
+```
+
+---
+
+# Installation
+
+### Requirements
+
+* Node.js 18+
 * npm or yarn
-* Local LAN access for multi-machine demos (seller & buyer on same subnet)
-* Optionally: an EVM wallet and small amount of testnet funds for on-chain demos
 
-**Clone & install**:
+Clone the repository:
 
-```bash
-git clone <your-repo-url>
+```
+git clone <repo-url>
 cd axylossss
 npm install
 ```
 
-**Environment**
-Create a `.env` file in the repository root (see Section 6).
-
 ---
 
-## 6. Environment Variables
+# Environment Variables
 
-Create `.env` with the following keys (example values shown):
+Create a `.env` file:
 
 ```
-NODE_ENV=development
 PORT=8080
 MESH_PORT=9999
-MESH_BROADCAST_ADDR=255.255.255.255
-AGENT_ID=seller-01
-AES_MESH_KEY=0123456789abcdef0123456789abcdef
+AGENT_ID=agent1
+
+AES_MESH_KEY=32BYTE_SECRET
+
 ELSA_API_BASE=https://x402-api.heyelsa.ai
-ELSA_PRIVATE_KEY=0xYOUR_PRIVATE_KEY_FOR_SIGNING
+ELSA_PRIVATE_KEY=YOUR_PRIVATE_KEY
+
 ELSA_ENABLE_EXECUTION_TOOLS=false
-ELSA_SESSION_DAILY_LIMIT=5.00
-ELSA_SESSION_CALL_LIMIT=100
-PAYMENT_TIMEOUT_MS=120000
 ```
 
-**Notes**:
+Important:
 
-* `AES_MESH_KEY` is a demo symmetric key; rotate it for each agent during real tests.
-* `ELSA_PRIVATE_KEY` is used to sign X-PAYMENT headers; **never** commit it to source control.
-* `ELSA_ENABLE_EXECUTION_TOOLS` toggles whether the execution tools (on-chain swap) will run. Keep false for demo-only runs.
+* never commit private keys
+* enable execution tools only when ready for live transactions
 
 ---
 
-## 7. Running the System (Examples)
+# Running the System
 
-**Seller node (local)**
+Start the seller node:
 
-```bash
-PORT=8080 MESH_PORT=9999 npm run seller
+```
+npm run seller
 ```
 
-**Buyer node (other laptop on same network)**
+Start the buyer node:
 
-```bash
-PORT=8081 MESH_PORT=9998 npm run buyer
+```
+npm run buyer
 ```
 
-**Interactive CLI (single machine)**
+Run the interactive CLI:
 
-```bash
+```
 npm run cli
-# from the shell: propose trade --pair WETH/USDC --amount 1
 ```
 
-**Run a swap (with execution enabled)**
+Example CLI command:
 
-```bash
-ELSA_ENABLE_EXECUTION_TOOLS=true npm run buyer
-# then propose a trade via the CLI or REST endpoint that will progress to PAYMENT_402_REQUIRED
+```
+propose trade WETH 1
 ```
 
 ---
 
-## 8. API Reference (quick)
-
-> All endpoints are available on the agent HTTP port (e.g. [http://localhost:8080](http://localhost:8080))
-
-### `GET /health`
-
-**Description**: Returns { status: 'ok', ts: <now> }.
-
-### `GET /portfolio`
-
-**Returns**: Portfolio snapshot. Calls Elsa `analyzeWallet()`; if Elsa times out, returns `status: 'demo mode'` and a mock portfolio.
-
-### `GET /price/:token`
-
-**Returns**: Price object `{ token, price, ts }`. Fallback to `price: 2500` on error.
-
-### `POST /trade/propose`
-
-Payload example:
-
-```json
-{ "to": "seller-01", "service": "swap", "pair":"USDC/WETH", "amount": 100 }
-```
-
-**Flow**: sends NEGO_OFFER message to peer via UDP mesh. Returns `status: 'sent'` with negotiation id.
-
-### `POST /trade/execute`
-
-Payload example:
-
-```json
-{ "negotiationId": "uuid", "paymentJwt": "..." }
-```
-
-**Flow**: Verifies the x402 payment signature, validates the negotiation state, and (if enabled) triggers on-chain swap execution.
-
-### `POST /openclaw/command`
-
-**Description**: accepts natural language command. In current implementation, uses simple string checks (mock). Example commands: "price WETH", "show portfolio", "buy WETH if price < 2400".
-
----
-
-## 9. Negotiation & Payment Flow
-
-### Sequence (concise)
-
-1. Buyer calls `POST /trade/propose` or uses CLI.
-2. Seller receives NEGO_OFFER via mesh and replies with COUNTER or NEGO_ACCEPT.
-3. If agreement reached, Seller sends `PAYMENT_402_REQUIRED` with required fee & metadata.
-4. Buyer uses ElsaX402PaymentClient to sign payment and call the x402 API with `X-PAYMENT` header.
-5. Seller verifies payment via x402 response and responds `PAYMENT_402_COMPLETED` over mesh.
-6. If `ELSA_ENABLE_EXECUTION_TOOLS=true`, seller triggers actual swap through Elsa `executeSwap` tool; otherwise a dry-run result is returned.
-
-### Important failure cases
-
-* Payment timeout → negotiation aborted and both nodes log a `PAYMENT_TIMEOUT` event.
-* x402 API error → seller can optionally return demo-mode result to complete the demo flow.
-
----
-
-## 10. Security Considerations
-
-**Local demo vs production**
-
-* The mesh uses AES-256 symmetric encryption for simplicity (demo). A production system should use authenticated key exchange (e.g., ephemeral ECDH + signatures) and ZK-proof of payment if required.
-
-**Key management**
-
-* Never commit `ELSA_PRIVATE_KEY` to the repo. Use OS-level secret stores or ephemeral wallets.
-
-**Payment verification**
-
-* The seller must verify the x402 response and ensure the signed payload matches the negotiation id to avoid replay attacks.
-
-**Rate-limiting & budgets**
-
-* Client-side budget enforcement is implemented, but server-side budgeting and daily caps on the x402 account would be required in production.
-
-**Trade safety**
-
-* When enabling `ELSA_ENABLE_EXECUTION_TOOLS`, use transaction simulation and slippage limits.
-
----
-
-## 11. Demo Plan & Suggested Scripts (ETHMumbai-friendly)
-
-**Goal**: Show agent discovery, negotiation, x402 payment, and on-chain settlement in under 2 minutes.
-
-**Prep (before the pitch)**
-
-* Two laptops on the same Wi‑Fi network
-* Seller: `npm run seller` (port 8080)
-* Buyer: `npm run buyer` (port 8081)
-* Ensure `.env` has `ELSA_ENABLE_EXECUTION_TOOLS=false` for safe demo unless you have testnet funds ready
-
-**Script**
-
-1. Show the architecture slide (15s)
-2. Start seller and buyer terminals side-by-side — show `Peer discovered` lines (15s)
-3. From CLI on buyer laptop: `propose trade WETH 1` (the CLI prints the NEGO sequence) (30s)
-4. Show `HTTP 402 Payment Required` printed on buyer terminal (10s)
-5. Show `Signing X-PAYMENT header` and `Payment authorized` from Elsa client logs (15s)
-6. Show seller `PAYMENT_402_COMPLETED` followed by `Executing swap` or `demo result` and print TX hash if execution on (20s)
-7. Close with the product statement: "This enables agent-to-agent commerce with cryptographic payments and on-chain settlement." (15s)
-
-**Pro tip**: Keep UI simple — a tiny web page showing `Connected Peers`, `Current Negotiations`, and `Last TX` will make the demo more accessible.
-
----
-
-## 12. Testing & Troubleshooting
-
-**Common issues**
-
-* `Peer not discovered` — check both machines are on the same subnet and `MESH_PORT` is not blocked by OS firewall.
-* `x402 API errors` — verify `ELSA_API_BASE` and network connectivity. Check signed JWT payload for timestamp drift.
-* `Private key errors` — ensure `ELSA_PRIVATE_KEY` is in correct hex format and matches the wallet expected by the x402 account.
-
-**Local unit tests**
-
-* Add unit tests for `ElsaX402PaymentClient.signPayment()` to ensure predictable signatures for a given keypair.
-* Add an E2E integration test that runs `seller` and `buyer` in a child process and asserts the negotiation completes (mock x402 or use a sandbox endpoint).
-
----
-
-## 13. Roadmap & Future Enhancements
-
-**Short-term (hackathon & post-hackathon)**
-
-* Replace the mocked OpenClaw decision engine with a real LLM backend (Anthropic/Claude or OpenAI) and a robust prompt-to-JSON intent schema.
-* Add a minimal web dashboard for live visualization of the mesh, negotiations, and transactions.
-* Add a credentials store for safe private key handling.
-
-**Medium-term (research / product)**
-
-* Add secure peer authentication (ECDH key exchange + signed announcements).
-* Implement micropayment streaming for long-running services (beyond single 402 payments).
-* Add an on-chain registry for discoverable agent meta-data (optional: ENS-style names for agents).
-
-**Long-term**
-
-* Integrate reputation & escrow systems (on-chain) to support larger economic activity among agents.
-* Design and publish an Agent Economy RFC (protocol spec) that standardizes NEGO message formats and x402 usage for agent-to-agent commerce.
-
----
-
-## 14. Contributing
-
-**How to contribute**
-
-* Fork the repo, create a topic branch, and open a PR with clear tests.
-* For major changes (LLM integration, protocol changes), open an issue first describing the change and intended design.
-
-**Code style**
-
-* ESLint & Prettier: keep code standard and format before PRs.
-
-**Testing**
-
-* Add unit tests for critical functions (payment signing, mesh message encryption/decryption, negotiation state transitions)
-
----
-
-## 15. Appendix: File map & quick references
+# Example Negotiation Flow
 
 ```
-/ (repo root)
-├─ .env.example
-├─ package.json
-├─ README.md (short)
-├─ lib/
-│  ├─ ElsaX402PaymentClient.js
-│  ├─ OpenClawAgent.js
-│  └─ P2PMeshNetwork.js
-├─ agent-dns-server.js
-├─ agent-dns-openclaw-integration.js
-├─ agent-dns-openclaw-integration-fixed.js
-├─ cli/
-│  └─ index.js
-├─ routes/
-│  └─ trade.js
-└─ utils/
-   └─ encryption.js
+Seller: Offer $2600
+Buyer: Counter $2400
+Seller: Counter $2500
+Buyer: Accept
+
+→ HTTP 402 Payment Required
+→ Payment Signed
+→ Payment Verified
+→ Swap Executed
 ```
-
-**Quick commands**
-
-* `npm run seller` — start seller node
-* `npm run buyer` — start buyer node
-* `npm run cli` — interactive CLI
-* `ELSA_ENABLE_EXECUTION_TOOLS=true npm run buyer` — enable live on-chain execution (use with caution)
 
 ---
 
-If you'd like, I can now:
+# API Endpoints
 
-* split this document into `README.md` + `API.md` + `CONTRIBUTING.md` files inside the repo, or
-* create a minimal web dashboard preview (20–30 lines of React) to visualize peers & negotiations, or
-* replace the mock OpenClaw decision function with a small LLM prompt-to-JSON adapter using your preferred provider.
+### Health Check
 
-Which of these would you like next?
+```
+GET /health
+```
+
+---
+
+### Get Token Price
+
+```
+GET /price/:token
+```
+
+Example:
+
+```
+GET /price/WETH
+```
+
+---
+
+### Portfolio Analysis
+
+```
+GET /portfolio
+```
+
+---
+
+### Propose Trade
+
+```
+POST /trade/propose
+```
+
+Example payload:
+
+```
+{
+  "service": "swap",
+  "pair": "USDC/WETH",
+  "amount": 100
+}
+```
+
+---
+
+### Execute Trade
+
+```
+POST /trade/execute
+```
+
+---
+
+### Natural Language Command
+
+```
+POST /openclaw/command
+```
+
+Example:
+
+```
+"check weth price"
+```
+
+---
+
+# Demo Mode
+
+For hackathon demos the system includes **fallback logic**.
+
+If external APIs fail:
+
+* mock prices are returned
+* swaps run as dry‑runs
+* responses return `{ status: "demo mode" }`
+
+This ensures the demo never crashes.
+
+---
+
+# Security Notes
+
+* private keys must never be committed
+* AES mesh encryption protects peer traffic
+* payment signatures prevent spoofing
+* rate limits protect budgets
+
+---
+
+# Future Improvements
+
+Potential upgrades:
+
+* integrate real LLM reasoning
+* add agent reputation systems
+* implement on‑chain service registry
+* create agent marketplace UI
+* add decentralized identity for agents
+
+---
+
+# Example Use Cases
+
+AgentDNS can enable:
+
+* AI trading bots negotiating execution fees
+* decentralized API marketplaces
+* autonomous DeFi portfolio managers
+* agent‑to‑agent service markets
+
+---
+
+# Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Submit a pull request
+
+---
+
+# License
+
+MIT License
+
+---
+
+# Summary
+
+AgentDNS demonstrates a new internet primitive:
+
+**autonomous agents that can discover, negotiate, pay, and transact without humans.**
+
+It combines:
+
+* P2P networking
+* negotiation protocols
+* HTTP 402 micropayments
+* blockchain execution
+
+into a working prototype of an **AI‑driven economic network.**
+
