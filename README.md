@@ -152,6 +152,53 @@ Layers:
 | Payment Layer    | x402 micropayments            |
 | Execution Layer  | DeFi interactions             |
 
+sequenceDiagram
+    participant User
+    participant Buyer as Buyer Agent (OpenClaw)
+    participant Mesh as Agent DNS Mesh
+    participant Seller as Seller Agent
+    participant Elsa as Elsa X402 Client
+    participant API as x402 API
+    participant Chain as Blockchain / DeFi
+
+    User->>Buyer: Start Trade Request (Token + Amount)
+
+    rect rgb(30,30,30)
+        note right of Buyer: Phase 1 - Agent Discovery
+        Buyer->>Mesh: Broadcast presence
+        Mesh-->>Seller: Peer discovered
+    end
+
+    rect rgb(40,40,40)
+        note right of Buyer: Phase 2 - Negotiation
+        Buyer->>Seller: NEGO_OFFER
+        Seller-->>Buyer: COUNTER
+        Buyer->>Seller: NEGO_ACCEPT
+    end
+
+    rect rgb(50,50,50)
+        note right of Seller: Phase 3 - Payment Challenge
+        Seller->>Buyer: HTTP 402 Payment Required
+    end
+
+    rect rgb(60,60,60)
+        note right of Buyer: Phase 4 - Micropayment
+        Buyer->>Elsa: Generate X-PAYMENT Header
+        Elsa->>API: Submit Signed Payment
+        API-->>Elsa: Payment Verified
+    end
+
+    rect rgb(70,70,70)
+        note right of Seller: Phase 5 - Execution
+        Seller->>Chain: Execute Swap / Service
+        Chain-->>Seller: Transaction Hash
+    end
+
+    rect rgb(80,80,80)
+        note right of System: Phase 6 - Settlement
+        Seller-->>Buyer: PAYMENT_402_COMPLETED
+        Buyer-->>User: Trade Successful
+    end
 ---
 
 # Project Structure
