@@ -31,6 +31,60 @@ Example flow:
 5. Service executes and optionally settles on-chain.
 
 ---
+```mermaid
+flowchart LR
+
+subgraph User_Layer["User Layer"]
+U["User / CLI Interface"]
+end
+
+subgraph Agent_Layer["Agent Layer"]
+B["Buyer Agent<br/>OpenClaw"]
+S["Seller Agent<br/>OpenClaw"]
+end
+
+subgraph Networking_Layer["Networking Layer"]
+M["Agent DNS Mesh Network<br/>UDP P2P"]
+N["Negotiation Protocol<br/>Offer → Counter → Accept"]
+end
+
+subgraph Payment_Layer["Payment Layer"]
+P1["HTTP 402 Payment Challenge"]
+P2["Elsa X402 Payment Client"]
+P3["X-PAYMENT Header<br/>ECDSA Signed"]
+end
+
+subgraph Execution_Layer["Execution Layer"]
+E1["Elsa API Execution"]
+E2["Swap Quote / Portfolio Analysis"]
+E3["Swap Execution Tool"]
+end
+
+subgraph Blockchain_Layer["Blockchain Layer"]
+D["DEX / DeFi Protocols"]
+C["EVM Blockchain<br/>Base / Ethereum"]
+end
+
+
+U --> B
+U --> S
+
+B --> M
+S --> M
+
+M --> N
+N --> P1
+
+P1 --> P2
+P2 --> P3
+
+P3 --> E1
+
+E1 --> E2
+E1 --> E3
+
+E3 --> D
+D --> C
 
 # Features
 
