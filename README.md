@@ -160,7 +160,7 @@ sequenceDiagram
     participant Elsa as Elsa X402 Client
     participant API as x402 API
     participant Chain as Blockchain / DeFi
-
+```mermaid
     User->>Buyer: Start Trade Request (Token + Amount)
 
     rect rgb(30,30,30)
@@ -199,6 +199,7 @@ sequenceDiagram
         Seller-->>Buyer: PAYMENT_402_COMPLETED
         Buyer-->>User: Trade Successful
     end
+```
 ---
 
 # Project Structure
