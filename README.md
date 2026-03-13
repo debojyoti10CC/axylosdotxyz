@@ -151,7 +151,7 @@ Layers:
 | Networking Layer | peer discovery + negotiation  |
 | Payment Layer    | x402 micropayments            |
 | Execution Layer  | DeFi interactions             |
-
+```mermaid
 sequenceDiagram
     participant User
     participant Buyer as Buyer Agent (OpenClaw)
@@ -160,7 +160,7 @@ sequenceDiagram
     participant Elsa as Elsa X402 Client
     participant API as x402 API
     participant Chain as Blockchain / DeFi
-```mermaid
+
     User->>Buyer: Start Trade Request (Token + Amount)
 
     rect rgb(30,30,30)
