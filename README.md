@@ -65,7 +65,6 @@ D["DEX / DeFi Protocols"]
 C["EVM Blockchain<br/>Base / Ethereum"]
 end
 
-
 U --> B
 U --> S
 
@@ -84,8 +83,8 @@ E1 --> E2
 E1 --> E3
 
 E3 --> D
-D --> C
-
+D -->
+```
 # Features
 
 ## Agent Discovery (P2P Mesh)
